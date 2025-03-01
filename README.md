@@ -27,7 +27,7 @@ A simple client application that uses the palworld rest api to have a better ser
 
 
 ## Install
-download the latest release installer: https://github.com/crow0085/PalworldRestApiClient/releases
+download the latest release installer: https://github.com/crow0085/PalworldRestApiClient/releases and run the app once after install to generate an ini file, then open and edit the file fields to match your server. You can then launch the app again and it will load the settings in the ini file
 
 or
 
@@ -44,6 +44,8 @@ run the command to start the app:
 ```bash
   npm run tauri dev  
 ```
+
+Navigate to ```src-tauri\target\debug\pal_api_config.ini``` and edit the fields to match your server
 
 
 ## Video showing download install and running the application
