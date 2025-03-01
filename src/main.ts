@@ -55,7 +55,7 @@ async function Info(){
   document.getElementById("content")!.appendChild(servernameP);
 
   const descriptionP = document.createElement("p");
-  descriptionP.innerHTML = `Server Description: ${json.Description}`;
+  descriptionP.innerHTML = `Server Description: ${json.description}`;
   document.getElementById("content")!.appendChild(descriptionP);
 
   const worldguidP = document.createElement("p");
