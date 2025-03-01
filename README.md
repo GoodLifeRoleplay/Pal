@@ -45,7 +45,7 @@ run the command to start the app:
   npm run tauri dev  
 ```
 
-Navigate to ```src-tauri\target\debug\pal_api_config.ini``` and edit the fields to match your server
+Navigate to ```src-tauri\target\debug\pal_api_config.ini``` and edit the fields to match your server and then run the command to start the app again
 
 
 ## Video showing download install and running the application
