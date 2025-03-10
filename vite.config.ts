@@ -5,7 +5,24 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
-
+  build: {
+    rollupOptions: {
+      input: {
+        main: 'index.html',
+        login: 'login/index.html',
+        info: 'info/index.html',
+        playerlist: 'playerlist/index.html',
+        serversettings: 'serversettings/index.html',
+        metrics: 'metrics/index.html',
+        broadcast: 'broadcast/index.html',
+        kick: 'kick/index.html',
+        ban: 'ban/index.html',
+        unban: 'unban/index.html',
+        save: 'save/index.html',
+        shutdown: 'shutdown/index.html',
+      },
+    },
+  },
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent vite from obscuring rust errors
