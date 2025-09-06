@@ -1,26 +1,33 @@
 {
-  "$schema": "https://tauri.app/schemas/tauri-1.json",
-  "package": {
-    "productName": "Palworld Rest Api Client",
-    "version": "1.1.0"
-  },
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "palworld-rest-api-client",
+  "version": "1.1.0",
+  "identifier": "com.sorrowkrazy.app",
   "build": {
     "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist"
+    "frontendDist": "../dist"
   },
-  "tauri": {
-    "bundle": { "active": true, "identifier": "com_sorrowkrazy.app" },
+  "app": {
+    "withGlobalTauri": true,
     "windows": [
-      {
-        "title": "Palworld Rest Api Client",
-        "width": 1280,
-        "height": 800,
-        "resizable": true
-      }
+      { "title": "Palworld Rest Api Client", "width": 1290, "height": 800 }
     ],
-    "allowlist": { "all": true },
-    "security": { "csp": null }
+    "security": {
+      "csp": null,
+      "capabilities": ["main-capability"]   
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }
