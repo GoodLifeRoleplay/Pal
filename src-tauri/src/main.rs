@@ -9,6 +9,8 @@ use tauri::{State};                  // <- drop `Manager`
 use tokio::{task::JoinHandle, time::sleep};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
+use serde_json::Value;
+
 
 #[derive(Clone, Serialize, Deserialize, Default)]   // <-- add Default here
 struct ApiConfig {
@@ -90,6 +92,94 @@ struct AppState {
   auto: Mutex<AutoRestartState>,
 }
 
+fn s_alt(v: &Value, keys: &[&str]) -> Option<String> {
+  for k in keys {
+    if let Some(s) = v.get(*k).and_then(|x| x.as_str()) { return Some(s.to_string()); }
+  }
+  None
+}
+fn u_alt(v: &Value, keys: &[&str]) -> Option<usize> {
+  for k in keys {
+    if let Some(n) = v.get(*k) {
+      if let Some(u) = n.as_u64() { return Some(u as usize); }
+      if let Some(f) = n.as_f64() { return Some(f as usize); }
+      if let Some(s) = n.as_str().and_then(|t| t.parse::<usize>().ok()) { return Some(s); }
+    }
+  }
+  None
+}
+fn u64_alt(v: &Value, keys: &[&str]) -> Option<u64> {
+  for k in keys {
+    if let Some(n) = v.get(*k) {
+      if let Some(u) = n.as_u64() { return Some(u); }
+      if let Some(f) = n.as_f64() { return Some(f as u64); }
+      if let Some(s) = n.as_str().and_then(|t| t.parse::<u64>().ok()) { return Some(s); }
+    }
+  }
+  None
+}
+
+fn coerce_server_info(v: &Value) -> ServerInfo {
+  // Allow nesting like { data: {...} }
+  let root = v.get("data").unwrap_or(v);
+
+  let name = s_alt(root, &["name", "serverName", "ServerName"]).unwrap_or_else(|| "Unknown".into());
+  let map  = s_alt(root, &["map", "Map", "world", "World"]);
+  let maxp = u_alt(root, &["max_players", "maxPlayers", "MaxPlayers", "max_player", "max"]);
+  let up   = u64_alt(root, &["uptime", "uptimeSeconds", "uptime_sec", "Uptime"]);
+  // players_online: try fields; fallback to players array length if present
+  let mut players_online = u_alt(root, &["players_online", "playersOnline", "currentPlayers", "numPlayers"]).unwrap_or(0);
+  if players_online == 0 {
+    if let Some(arr) = root.get("players").and_then(|x| x.as_array()) {
+      players_online = arr.len();
+    } else if let Some(obj) = root.get("players").and_then(|x| x.as_object()) {
+      players_online = obj.len();
+    }
+  }
+
+  ServerInfo {
+    name,
+    map,
+    players_online,
+    max_players: maxp,
+    uptime_seconds: up,
+  }
+}
+
+fn coerce_players(v: &Value) -> Vec<Player> {
+  // Accept many shapes:
+  // - [ {...}, {...} ]
+  // - { players: [ ... ] }
+  // - { players: { id: {...}, id2: {...} } }
+  // - { data: ... } wrapping any of the above
+  let root = v.get("data").unwrap_or(v);
+
+  let collect_from_val = |vv: &Value| -> Vec<Player> {
+    if let Some(arr) = vv.as_array() {
+      arr.iter().filter_map(player_from_obj).collect()
+    } else if let Some(obj) = vv.as_object() {
+      // map id -> player
+      obj.values().filter_map(player_from_obj).collect()
+    } else { vec![] }
+  };
+
+  let mut out = vec![];
+  if let Some(pl) = root.get("players") {
+    out.extend(collect_from_val(pl));
+  } else {
+    out.extend(collect_from_val(root));
+  }
+  out
+}
+
+fn player_from_obj(v: &Value) -> Option<Player> {
+  let id = s_alt(v, &["id","playerId","steamId","steam_id","userId","uid","guid"])?;
+  let name = s_alt(v, &["name","playerName","characterName","displayName"]).unwrap_or_else(|| "Unknown".into());
+  let level = u_alt(v, &["level","lvl","Level"]);
+  let ping  = u_alt(v, &["ping","latency","Latency"]);
+  Some(Player { id, name, level: level.map(|x| x as u32), ping: ping.map(|x| x as u32) })
+}
+
 #[derive(thiserror::Error, Debug)]
 enum AppErr {
   #[error("Unauthorized")]
@@ -105,6 +195,15 @@ fn auth_header(token: &Option<String>) -> Vec<(reqwest::header::HeaderName, Stri
     }
     _ => vec![],
   }
+}
+
+async fn api_get_value(cfg: &ApiConfig, path: &str) -> Result<Value> {
+  let url = format!("{}/{}", cfg.base_url.trim_end_matches('/'), path.trim_start_matches('/'));
+  let mut req = reqwest::Client::new().get(url);
+  for (k, v) in auth_header(&cfg.token) { req = req.header(k, v); }
+  let res = req.send().await?;
+  if res.status() == 401 { return Err(AppErr::Unauthorized.into()); }
+  Ok(res.json::<Value>().await?)
 }
 
 async fn api_get<T: for<'de> Deserialize<'de>>(cfg: &ApiConfig, path: &str) -> Result<T> {
@@ -178,16 +277,19 @@ async fn set_api_config(state: State<'_, AppState>, cfg: ApiConfig) -> Result<()
 #[tauri::command]
 async fn get_server_info(state: State<'_, AppState>) -> Result<ServerInfo, String> {
   let cfg = state.config.lock().clone();
-  api_get::<ServerInfo>(&cfg, "server/info").await.map_err(|e| e.to_string())
+  let v = api_get_value(&cfg, "server/info").await.map_err(|e| e.to_string())?;
+  Ok(coerce_server_info(&v))
 }
 
 #[tauri::command]
 async fn get_players(state: State<'_, AppState>) -> Result<Vec<Player>, String> {
   let cfg = state.config.lock().clone();
-  let players = api_get::<Vec<Player>>(&cfg, "server/players").await.map_err(|e| e.to_string())?;
+  let v = api_get_value(&cfg, "server/players").await.map_err(|e| e.to_string())?;
+  let players = coerce_players(&v);
   state.tracker.lock().update_with(&players);
   Ok(players)
 }
+
 
 #[tauri::command]
 async fn player_durations(state: State<'_, AppState>) -> Result<HashMap<String, i64>, String> {
