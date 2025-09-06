@@ -11,6 +11,7 @@ use tauri::{State};                  // <- drop `Manager`
 use tokio::{task::JoinHandle, time::sleep};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
+static HTTP: Lazy<Client> = Lazy::new(|| Client::new());
 
 #[derive(Clone, Serialize, Deserialize, Default)]   // <-- add Default here
 struct ApiConfig {
@@ -111,7 +112,7 @@ fn auth_header(token: &Option<String>) -> Vec<(reqwest::header::HeaderName, Stri
 
 async fn api_get<T: for<'de> Deserialize<'de>>(cfg: &ApiConfig, path: &str) -> Result<T> {
   let url = format!("{}/{}", cfg.base_url.trim_end_matches('/'), path.trim_start_matches('/'));
-  let mut req = HTTP.get(url);
+  let mut req = reqwest::Client::new().get(url);
   for (k, v) in auth_header(&cfg.token) {
     req = req.header(k, v);
   }
@@ -122,7 +123,7 @@ async fn api_get<T: for<'de> Deserialize<'de>>(cfg: &ApiConfig, path: &str) -> R
 
 async fn api_post(cfg: &ApiConfig, path: &str, body: serde_json::Value) -> Result<()> {
   let url = format!("{}/{}", cfg.base_url.trim_end_matches('/'), path.trim_start_matches('/'));
-  let mut req = HTTP.post(url).json(&body);
+  let mut req = reqwest::Client::new().post(url).json(&body);
   for (k, v) in auth_header(&cfg.token) {
     req = req.header(k, v);
   }
