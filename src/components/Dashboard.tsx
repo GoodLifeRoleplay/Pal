@@ -32,8 +32,8 @@ const td: React.CSSProperties = { borderBottom: "1px solid #192432", padding: "6
 const grid2: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 };
 
 export default function Dashboard() {
-  const [baseUrl, setBaseUrl] = useState("http://127.0.0.1:8212/v1/api");
-  const [token, setToken] = useState("");
+  const [baseUrl, setBaseUrl] = useState("http://45.141.24.11:8212/v1/api");
+  const [token, setToken] = useState("Papsmells");
   const [tauriMissing, setTauriMissing] = useState(false);
 
   const [server, setServer] = useState<ServerInfo | null>(null);
@@ -73,7 +73,7 @@ export default function Dashboard() {
   useEffect(() => {
     (async () => {
       try {
-        await tInvoke("set_api_config", { cfg: { base_url: baseUrl, token: token || null } });
+        await tInvoke("set_config", { base_url: baseUrl, password: token || null });
         pushLog(`REST route: "${baseUrl}"`);
         setTauriMissing(false);
       } catch (e: any) {
@@ -111,7 +111,8 @@ export default function Dashboard() {
   }, []);
 
   async function onBroadcast() {
-    try { await tInvoke("broadcast", { message: msg }); pushLog("Broadcast sent"); setMsg(""); }
+    try { await tInvoke("announce_message", { message: msg });
+ pushLog("Broadcast sent"); setMsg(""); }
     catch (e: any) { pushLog(`Broadcast failed: ${e?.message || e}`); }
   }
   async function onSave() {
@@ -119,18 +120,16 @@ export default function Dashboard() {
     catch (e: any) { pushLog(`Save failed: ${e?.message || e}`); }
   }
   async function onShutdown() {
-    try { await tInvoke("shutdown", { delay_secs: 60 }); pushLog("Shutdown in 60s"); }
+    try { await tInvoke("shutdown_server", { seconds: 60, msg: "Server restarting..." }); pushLog("Shutdown in 60s"); }
     catch (e: any) { pushLog(`Shutdown failed: ${e?.message || e}`); }
   }
   async function onBackup() {
-    try { const zipPath: string = await tInvoke("run_backup", { save_dir: saveDir }); pushLog(`Backup created: ${zipPath}`); }
+    try { const zipPath: string = await tInvoke("backup_now", { save_dir: saveDir }); pushLog(`Backup created: ${zipPath}`); }
     catch (e: any) { pushLog(`Backup failed: ${e?.message || e}`); }
   }
   async function onStartAuto() {
     try {
-      await tInvoke("start_auto_restart", {
-        cfg: { interval_minutes: Number(intervalMin), save_dir: saveDir, start_command: startCmd || null }
-      });
+      await tInvoke("start_auto_restart", { minutes: Number(intervalMin) });
       pushLog(`Auto-restart ON (every ${intervalMin} min)`);
     } catch (e: any) { pushLog(`Auto-restart failed: ${e?.message || e}`); }
   }
@@ -154,10 +153,10 @@ export default function Dashboard() {
       <div style={card}>
         <h3 style={{ marginTop: 0 }}>Server</h3>
         <div style={grid2}>
-          <label>Base URL
+          <label>server URL
             <input style={input} value={baseUrl} onChange={e => setBaseUrl(e.target.value)} />
           </label>
-          <label>Token (optional)
+          <label>Password
             <input style={input} value={token} onChange={e => setToken(e.target.value)} />
           </label>
         </div>
@@ -177,7 +176,7 @@ export default function Dashboard() {
             <button style={btn} onClick={onBroadcast}>Send</button>
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <button style={btn} onClick={onSave}>Force Save</button>
+            <button style={btn} onClick={onSave}>Save</button>
             <button style={btn} onClick={() => pushLog("Manual refresh requested")}>Refresh Players</button>
             <button style={btnDanger} onClick={onShutdown}>Shutdown</button>
           </div>
