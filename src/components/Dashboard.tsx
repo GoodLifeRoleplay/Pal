@@ -1,13 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/** ---- Tauri bridge helpers (safe in browser & tauri) --------------------- */
+// at the top of Pal/src/components/Dashboard.tsx
+
 declare global { interface Window { __TAURI__?: any } }
 
+// unified helper: supports Tauri 1 and 2
 function tauriInvoke<T = any>(cmd: string, args?: any): Promise<T> {
-  const t = (window as any).__TAURI__?.tauri;
-  if (!t?.invoke) return Promise.reject(new Error("Tauri bridge not available"));
-  return t.invoke(cmd, args);
+  const g = (window as any).__TAURI__;
+  const invoke =
+    g?.invoke            // Tauri v1
+    ?? g?.tauri?.invoke; // Tauri v2
+
+  if (!invoke) return Promise.reject(new Error("Tauri bridge not available"));
+  return invoke(cmd, args);
 }
+
 
 /** ---- Types mirrored from the Rust commands -------------------------------- */
 type Player = { id: string; name: string; level?: number; ping?: number };
