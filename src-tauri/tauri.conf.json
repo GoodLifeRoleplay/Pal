@@ -11,10 +11,7 @@
     "distDir": "../dist"
   },
   "tauri": {
-    "bundle": {
-      "active": true,
-      "identifier": "com_sorrowkrazy.app"
-    },
+    "bundle": { "active": true, "identifier": "com_sorrowkrazy.app" },
     "windows": [
       {
         "title": "Palworld Rest Api Client",
@@ -23,11 +20,7 @@
         "resizable": true
       }
     ],
-    "allowlist": {
-      "all": true
-    },
-    "security": {
-      "csp": null
-    }
+    "allowlist": { "all": true },
+    "security": { "csp": null }
   }
 }

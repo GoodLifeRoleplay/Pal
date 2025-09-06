@@ -2,16 +2,13 @@
 
 use anyhow::Result;                  // <- drop `Context`
 use chrono::{DateTime, Local};
-use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, io::{Write, Read}, path::{Path, PathBuf}, time::Duration};
 use tauri::{State};                  // <- drop `Manager`
 use tokio::{task::JoinHandle, time::sleep};
 use walkdir::WalkDir;
 use zip::write::FileOptions;
-static HTTP: Lazy<Client> = Lazy::new(|| Client::new());
 
 #[derive(Clone, Serialize, Deserialize, Default)]   // <-- add Default here
 struct ApiConfig {
@@ -238,29 +235,30 @@ async fn run_backup(save_dir: String) -> Result<String, String> {
 
 #[tauri::command]
 async fn start_auto_restart(state: State<'_, AppState>, cfg: AutoRestartConfig) -> Result<(), String> {
-  // if already running, stop first
+  // stop any existing worker
   stop_auto_restart(state.clone()).await.ok();
+
+  // capture current API config NOW so the background task has it
+  let api_cfg = { state.config.lock().clone() };
 
   let handle = tokio::spawn(async move {
     loop {
-      // Save
-      let _ = force_save_inner().await;
+      // 1) Save
+      let _ = api_post(&api_cfg, "server/save", serde_json::json!({})).await;
 
-      // Backup
+      // 2) Backup
       let _ = run_backup(cfg.save_dir.clone()).await;
 
-      // Shutdown (60s)
-      let _ = shutdown_inner(60).await;
+      // 3) Shutdown (60s)
+      let _ = api_post(&api_cfg, "server/shutdown", serde_json::json!({ "delay": 60 })).await;
 
-      // Optional: start server again (after ~70s)
+      // 4) Optional start command after grace period
       sleep(Duration::from_secs(70)).await;
       if let Some(cmd) = &cfg.start_command {
-        let _ = std::process::Command::new("cmd")
-          .args(["/C", cmd])
-          .spawn();
+        let _ = std::process::Command::new("cmd").args(["/C", cmd]).spawn();
       }
 
-      // wait until next cycle
+      // 5) Wait for next interval
       sleep(Duration::from_secs(cfg.interval_minutes * 60)).await;
     }
   });
@@ -270,17 +268,6 @@ async fn start_auto_restart(state: State<'_, AppState>, cfg: AutoRestartConfig) 
     auto.enabled = true;
     auto.handle = Some(handle);
   }
-
-  Ok(())
-}
-
-async fn force_save_inner() -> Result<()> {
-  // uses the global state is tricky here; in a fuller setup we’d pass config.
-  // To keep simple for now we call a small local helper via tauri::invoke from UI.
-  Ok(())
-}
-
-async fn shutdown_inner(_delay: u64) -> Result<()> {
   Ok(())
 }
 
