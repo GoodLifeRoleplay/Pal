@@ -4,7 +4,10 @@ let cfg: ApiConfig = { base_url: "" };
 
 export function setConfig(next: ApiConfig) {
   cfg = next;
-  return window.__TAURI__.tauri.invoke("set_api_config", {
+  const anyWin = window as any;
+  const t = anyWin.__TAURI__?.tauri;
+  if (!t) throw new Error("Tauri bridge not available");
+  return t.invoke("set_api_config", {
     cfg: { baseUrl: cfg.base_url, token: cfg.token ?? null },
   });
 }
@@ -46,10 +49,4 @@ export async function startAutoRestart(cfg: AutoRestartConfig) {
 }
 export async function stopAutoRestart() {
   return invoke("stop_auto_restart");
-}
-function tauriInvoke<T = any>(cmd: string, args?: any): Promise<T> {
-  const anyWin = window as any;
-  const t = anyWin.__TAURI__?.tauri;
-  if (!t) throw new Error("Tauri bridge not available");
-  return t.invoke(cmd, args);
 }

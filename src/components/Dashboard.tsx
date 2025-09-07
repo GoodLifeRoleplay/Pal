@@ -83,7 +83,7 @@ export default function Dashboard() {
   // Explicit "Apply" button so we *know* config is set.
   async function applyConfig() {
     try {
-      await tInvoke("set_config", { base_url: baseUrl, password: password || null });
+      await tInvoke("set_config", { base_url: baseUrl, baseUrl: baseUrl, password: password || null });
       const cfg = await tInvoke<{ base_url: string; password: string | null }>("get_config");
       pushLog(`Config applied. Base: ${cfg.base_url}`);
       setTauriMissing(false);
@@ -105,7 +105,7 @@ export default function Dashboard() {
       }
       try {
         const p: Player[] = await tInvoke("get_players");
-        const d: Record<string, number> = await tInvoke("player_durations").catch(() => ({}));
+        const d: Record<string, number> = await tInvoke("player_durations").then(res => res as Record<string, number>).catch(() => ({}));
         if (!stop) {
           setPlayers(p);
           setDurations(d || {});
