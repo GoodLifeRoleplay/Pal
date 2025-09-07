@@ -11,7 +11,6 @@
   },
   "dependencies": {
     "@tauri-apps/plugin-fs": "^2.2.0",
-    "@tauri-apps/plugin-http": "^2.3.0",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.2.0",
     "@types/react": "^19.1.12",

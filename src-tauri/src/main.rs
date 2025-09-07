@@ -9,6 +9,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use tauri::{Manager, State};
+use reqwest::header::{CONTENT_LENGTH, CONNECTION, ACCEPT, USER_AGENT, CONTENT_TYPE};
+use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use urlencoding::encode; // Cargo.toml: urlencoding = "2"
+
+
+static SAVING: AtomicBool = AtomicBool::new(false);
+
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 struct ApiConfig {
@@ -57,6 +65,58 @@ struct Player {
     ping: Option<u32>,
     connected_seconds: Option<i64>,
 }
+
+fn v1_base(base: &str) -> String {
+    let b = base.trim_end_matches('/');
+    if b.ends_with("/v1/api") { b.to_string() } else { format!("{}/v1/api", b) }
+}
+
+async fn post_json(client: &reqwest::Client, v1: &str, pass: &str, path: &str, msg: &str) -> bool {
+    client
+        .post(&format!("{}/{}", v1, path))
+        .basic_auth("admin", Some(pass))
+        .header(CONTENT_TYPE, "application/json")
+        .body(format!(r#"{{"message":"{}"}}"#, msg))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+async fn post_text(client: &reqwest::Client, v1: &str, pass: &str, path: &str, msg: &str) -> bool {
+    client
+        .post(&format!("{}/{}", v1, path))
+        .basic_auth("admin", Some(pass))
+        .header(CONTENT_TYPE, "text/plain; charset=utf-8")
+        .body(msg.to_string())
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+async fn get_query(client: &reqwest::Client, v1: &str, pass: &str, path: &str, msg: &str) -> bool {
+    client
+        .get(&format!("{}/{path}?message={}", v1, encode(msg)))
+        .basic_auth("admin", Some(pass))
+        .send()
+        .await
+        .map(|r| r.status().is_success())
+        .unwrap_or(false)
+}
+
+/// Try /announce and /broadcast with JSON → text → GET; return true on first success.
+async fn announce_multi(client: &reqwest::Client, base: &str, pass: &str, msg: &str) -> bool {
+    let v1 = v1_base(base);
+
+    for path in ["announce", "broadcast"] {
+        if post_json(client, &v1, pass, path, msg).await { return true; }
+        if post_text(client, &v1, pass, path, msg).await { return true; }
+        if get_query (client, &v1, pass, path, msg).await { return true; }
+    }
+    false
+}
+
 
 // ===== Commands =====
 #[tauri::command]
@@ -286,10 +346,6 @@ async fn announce_message(state: State<'_, AppState>, message: String) -> Result
     api_post_value(&cfg, "announce", Some(body)).await.map(|_| ()).map_err(|e| e.to_string())
 }
 
-use reqwest::header::{AUTHORIZATION, CONTENT_LENGTH, CONTENT_TYPE, CONNECTION};
-use urlencoding::encode; // add `urlencoding = "2"` in Cargo.toml [dependencies] if not present
-use std::time::Duration;
-
 fn build_v1_base(base: &str) -> String {
     let b = base.trim_end_matches('/');
     if b.ends_with("/v1/api") { b.to_string() } else { format!("{}/v1/api", b) }
@@ -340,60 +396,60 @@ async fn announce_any(client: &reqwest::Client, base: &str, pass: &str, msg: &st
 async fn force_save(state: tauri::State<'_, AppState>) -> Result<String, String> {
     let cfg  = state.config.lock().clone();
     let pass = cfg.password.clone().unwrap_or_default();
-    let save_url = build_save_url(&cfg.base_url);
     let base = cfg.base_url.clone();
 
-    // keep a copy for the immediate return message
-    let return_url = save_url.clone();
+    // Normalize save URL once
+    let save_url_for_log = format!("{}/save", v1_base(&base));
+    let return_url = save_url_for_log.clone(); // keep a copy for immediate return
 
-    // fire-and-forget so the UI doesn’t block
+    // prevent concurrent saves
+    if SAVING.swap(true, Ordering::SeqCst) {
+        return Ok("save already in progress".into());
+    }
+
     tauri::async_runtime::spawn(async move {
         let client = match reqwest::Client::builder()
-            .timeout(Duration::from_secs(180))  // big worlds need time
+            .http1_only()
+            .pool_idle_timeout(Duration::from_secs(0))
             .build()
         {
             Ok(c) => c,
-            Err(_) => return,
+            Err(_) => { SAVING.store(false, Ordering::SeqCst); return; }
         };
 
-        // 0) tell everyone we’re saving (best effort)
-        announce_any(&client, &base, &pass, "Saving world…").await;
+        // Announce immediately
+        let _ = announce_multi(&client, &base, &pass, "Saving world…").await;
 
-        // 1) POST /v1/api/save with CL:0 and Connection: close (matches curl/original)
-        let result = client
-            .post(&save_url)
+        // POST /v1/api/save and wait as long as the server needs
+        let status_opt = client
+            .post(&save_url_for_log)
             .basic_auth("admin", Some(&pass))
             .header(CONTENT_LENGTH, "0")
             .header(CONNECTION, "close")
+            .header(ACCEPT, "*/*")
+            .header(USER_AGENT, "curl/8.13.0")
             .send()
-            .await;
+            .await
+            .ok()
+            .map(|r| r.status());
 
-        match result {
-            Ok(resp) if resp.status().is_success() => {
-                // 2) confirm success in chat
-                let _ = announce_any(&client, &base, &pass, "Game saved").await;
+        match status_opt {
+            Some(s) if s.is_success() => {
+                let _ = announce_multi(&client, &base, &pass, "Game saved").await;
             }
-            Ok(resp) => {
-                let _ = announce_any(
-                    &client, &base, &pass,
-                    &format!("Save failed: {}", resp.status())
-                ).await;
+            Some(s) => {
+                let _ = announce_multi(&client, &base, &pass, &format!("Save failed: {s}")).await;
             }
-            Err(e) => {
-                let _ = announce_any(
-                    &client, &base, &pass,
-                    &format!("Save error: {}", e)
-                ).await;
+            None => {
+                let _ = announce_multi(&client, &base, &pass, "Save error: request failed").await;
             }
         }
+
+        SAVING.store(false, Ordering::SeqCst);
     });
 
     Ok(format!("dispatched POST {}", return_url))
 }
-
-
-
-
 
 
 #[tauri::command]
