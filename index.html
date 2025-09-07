@@ -2,15 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;">
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Palworld Rest Api Client</title>
+    <style>
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    background: #0f141a; /* same dark as your app */
+  }
+</style>
   </head>
-  <body class="bg-zinc-900 text-zinc-100">
-    <!-- This is where we draw the app -->
-    <div id="pal-panel" class="p-4"></div>
-
-    <!-- Vite entry -->
-    <script type="module" src="/src/main.ts"></script>
+  <body>
+    <div id="root"></div>
+    <!-- IMPORTANT: this must match the real file below -->
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

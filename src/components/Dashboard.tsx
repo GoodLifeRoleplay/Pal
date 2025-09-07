@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { tInvoke, bridgeAvailable } from "../lib/tauriBridge";
+import { tInvoke, bridgeAvailable } from "../lib/tauribridge";
 
 type Player = { id: string; name: string; level?: number; ping?: number };
 type ServerInfo = {
@@ -109,14 +109,14 @@ export default function Dashboard() {
         if (!stop) {
           setPlayers(p);
           setDurations(d || {});
-          pushLog("Refreshed server info/players");
+          // pushLog("Refreshed server info/players");
         }
       } catch (e: any) {
         pushLog(`Players failed: ${e?.message || e}`);
       }
     }
     refresh();
-    const t = setInterval(refresh, 5000);
+    const t = setInterval(refresh, 10000);
     return () => {
       stop = true;
       clearInterval(t);
@@ -132,14 +132,22 @@ export default function Dashboard() {
       pushLog(`Broadcast failed: ${e?.message || e}`);
     }
   }
-  async function onSave() {
-    try {
-      await tInvoke("force_save");
-      pushLog("Save triggered");
-    } catch (e: any) {
-      pushLog(`Save failed: ${e?.message || e}`);
-    }
+const [saving, setSaving] = useState(false);
+
+async function onSave() {
+  if (saving) return;
+  setSaving(true);
+  try {
+    const msg: string = await tInvoke("force_save");
+    pushLog(`Save: ${msg} (watch chat for “Saving world…” / “Game saved”)`);
+  } catch (e: any) {
+    pushLog(`Save failed to dispatch: ${e?.message ?? e}`);
+  } finally {
+    setSaving(false);
   }
+}
+
+
   async function onShutdown() {
     try {
       await tInvoke("shutdown_server", { seconds: 60, msg: "Server restarting..." });
@@ -150,7 +158,7 @@ export default function Dashboard() {
   }
   async function onBackup() {
     try {
-      const zipPath: string = await tInvoke("backup_now", { save_dir: saveDir });
+      const zipPath: string = await tInvoke("backup_now", { save_dir: saveDir, saveDir: saveDir });
       pushLog(`Backup created: ${zipPath}`);
     } catch (e: any) {
       pushLog(`Backup failed: ${e?.message || e}`);
@@ -215,7 +223,7 @@ export default function Dashboard() {
             <button style={btn} onClick={onBroadcast}>Send</button>
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            <button style={btn} onClick={onSave}>Save</button>
+            <button style={btn} onClick={onSave} disabled={saving}>{saving ? "Saving..." : "Save"}</button>
             <button style={btn} onClick={() => pushLog("Manual refresh requested")}>Refresh Players</button>
             <button style={btnDanger} onClick={onShutdown}>Shutdown</button>
           </div>
