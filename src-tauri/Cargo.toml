@@ -28,8 +28,9 @@ chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 anyhow = "1"
 parking_lot = "0.12"
-zip = "0.6"
 walkdir = "2"
 dirs = "6"
 base64 = "0.21"
 urlencoding = "2"
+dirs-next = "2"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }

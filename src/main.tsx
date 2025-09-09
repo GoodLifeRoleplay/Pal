@@ -1,10 +1,9 @@
 import React from "react";
-import { createRoot } from "react-dom/client";
+import ReactDOM from "react-dom/client";
 import Dashboard from "./components/Dashboard";
+import "./index.css"; // <-- DO NOT REMOVE
 
-const rootEl = document.getElementById("root");
-if (!rootEl) throw new Error("Missing <div id='root'/>");
-createRoot(rootEl).render(
+ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <Dashboard />
   </React.StrictMode>

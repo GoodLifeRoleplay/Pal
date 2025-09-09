@@ -11,5 +11,5 @@
     "types": ["vite/client"]
   },
   "include": ["src"],
-  "exclude": ["src/main.js"]
+  "exclude": ["src/main.js", "src/api_functions.ts"]
 }
