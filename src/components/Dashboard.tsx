@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { open as openDialog } from "@tauri-apps/api/dialog";
 import { invoke } from "@tauri-apps/api/tauri";
 import { normalizeBaseUrl } from "../lib/url";
 
@@ -8,6 +9,7 @@ type ApiConfig = {
   restart_times?: string[];
   start_cmd?: string | null;
   backup_dir?: string | null;
+  backup_dest_dir?: string | null;
 };
 
 type Player = {
@@ -30,6 +32,14 @@ function fmtUptime(sec?: number | null) {
   return `${h}h ${m}m`;
 }
 
+function fmtConnectedSeconds(s?: number | null) {
+  if (s == null || s < 0) return "?";
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
 export default function Dashboard() {
   // config + UI state
   const [cfg, setCfg] = useState<ApiConfig>({ base_url: "", password: "" });
@@ -46,15 +56,22 @@ export default function Dashboard() {
   const [logs, setLogs] = useState<string[]>([]);
   const [startCmd, setStartCmd] = useState<string>("");
   const [backupDir, setBackupDir] = useState<string>("");
+  const [backupDestDir, setBackupDestDir] = useState<string>("");
   const [discordHook, setDiscordHook] = useState<string>("");
+  const [allowActions, setAllowActions] = useState<boolean>(true);
+  const loadedRef = React.useRef(false);
+  const lastAppliedRef = React.useRef<string>("");
   const [connStatus, setConnStatus] = useState<{ ok: boolean; msg: string } | null>(null);
   const [liveConn, setLiveConn] = useState<{ ok: boolean; msg?: string } | null>(null);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
   const restartTimerRef = React.useRef<number | null>(null);
-  const [unbanOpen, setUnbanOpen] = useState(false);
-  const [unbanId, setUnbanId] = useState("");
+  const [backupsOpen, setBackupsOpen] = useState(false);
+  const prevPlayersRef = React.useRef<Map<string, string>>(new Map());
+  const [refreshHoldUntil, setRefreshHoldUntil] = useState<number>(0); // epoch ms to skip refreshes
 
-  const pushLog = (line: string) => setLogs((prev) => [...prev.slice(-400), `[${ts()}] ${line}`]);
+  // Newest first: prepend to the list so latest logs appear at the top
+  const pushLog = (line: string) =>
+    setLogs((prev) => [`[${ts()}] ${line}`, ...prev].slice(0, 500));
 
   // load config from backend on mount
   useEffect(() => {
@@ -63,27 +80,62 @@ export default function Dashboard() {
         const c = (await invoke("get_config")) as ApiConfig;
         const base_url = (c?.base_url || "").trim();
         const password = c?.password ?? "";
-        setCfg({ base_url, password, restart_times: c.restart_times ?? [], start_cmd: c.start_cmd ?? null, backup_dir: c.backup_dir ?? null });
+        setCfg({ base_url, password, restart_times: c.restart_times ?? [], start_cmd: c.start_cmd ?? null, backup_dir: c.backup_dir ?? null, backup_dest_dir: (c as any).backup_dest_dir ?? null });
         setRestartTimesText((c.restart_times ?? []).join(", "));
         setStartCmd(c.start_cmd || "");
         setBackupDir(c.backup_dir || "");
+        setBackupDestDir((c as any).backup_dest_dir || "");
         setDiscordHook((c as any).discord_webhook || (c as any).discordWebhook || "");
+        setAllowActions((c as any).allow_actions ?? true);
         pushLog(`Loaded settings. Base: ${base_url || "(not set)"}`);
-        if (base_url) await refreshAll();
+        if (base_url) {
+          // One-time auto-apply on start using the fully loaded values to avoid overwriting
+          const payload: any = {
+            base_url,
+            baseUrl: base_url,
+            password: password || null,
+            restart_times: c.restart_times ?? [],
+            restartTimes: c.restart_times ?? [],
+            start_cmd: c.start_cmd || null,
+            startCmd: c.start_cmd || null,
+            backup_dir: c.backup_dir || null,
+            backupDir: c.backup_dir || null,
+            backup_dest_dir: (c as any).backup_dest_dir || null,
+            backupDestDir: (c as any).backup_dest_dir || null,
+            discord_webhook: (c as any).discord_webhook || null,
+            discordWebhook: (c as any).discord_webhook || null,
+            allow_actions: (c as any).allow_actions ?? true,
+            allowActions: (c as any).allow_actions ?? true,
+          };
+          try {
+            await invoke("set_config", payload);
+            lastAppliedRef.current = `${normalizeBaseUrl(base_url)}|${password}|${(c.restart_times??[]).join(",")}|${c.start_cmd||""}|${c.backup_dir||""}|${(c as any).backup_dest_dir||""}|${(c as any).discord_webhook||""}`;
+            pushLog("Settings applied from disk");
+          } catch (e: any) {
+            pushLog(`Auto-apply from disk failed: ${e?.toString?.() || e}`);
+          }
+          await refreshAll();
+        }
+        loadedRef.current = true;
       } catch (e: any) {
         pushLog(`Failed to load settings: ${e?.toString?.() || e}`);
       }
     })();
   }, []);
 
-  // periodic refresh (every 30s)
+  // periodic refresh (every 30s), respects refresh hold window
   useEffect(() => {
     if (!cfg.base_url) return;
     const id = setInterval(() => {
+      const now = Date.now();
+      if (now < refreshHoldUntil) {
+        // skip until hold expires
+        return;
+      }
       refreshAll();
     }, 30_000);
     return () => clearInterval(id);
-  }, [cfg.base_url]);
+  }, [cfg.base_url, refreshHoldUntil]);
 
   // local uptime ticker for smoother display
   useEffect(() => {
@@ -144,6 +196,8 @@ export default function Dashboard() {
         startCmd: startCmd || null,
         backup_dir: backupDir || null,
         backupDir: backupDir || null,
+        backup_dest_dir: backupDestDir || null,
+        backupDestDir: backupDestDir || null,
         discord_webhook: (discordHook || null),
         discordWebhook: (discordHook || null),
       };
@@ -156,6 +210,8 @@ export default function Dashboard() {
       setCfg({ ...next, base_url: base, restart_times });
       setRestartTimesText(restart_times.join(", "));
       pushLog(`Config applied. Base: ${base}${restart_times.length ? ` | restarts: ${restart_times.join(",")}` : ""}`);
+      // remember last applied snapshot
+      lastAppliedRef.current = `${base}|${next.password || ""}|${restart_times.join(",")}|${startCmd || ""}|${backupDir || ""}|${backupDestDir || ""}|${discordHook || ""}`;
       await refreshAll();
     } catch (e: any) {
       pushLog(`Apply failed: ${e?.toString?.() || e}`);
@@ -177,6 +233,8 @@ export default function Dashboard() {
 
   async function refreshAll() {
     if (!cfg.base_url) return;
+    // Skip if we're inside a restart/shutdown cool-down window
+    if (Date.now() < refreshHoldUntil) return;
     try {
       const info = (await invoke("get_server_info")) as {
         name: string;
@@ -193,6 +251,13 @@ export default function Dashboard() {
       const msg = e?.toString?.() || e;
       pushLog(`Refresh failed: GET info/players -> ${msg}`);
       setLiveConn({ ok: false, msg: String(msg) });
+      // If the server is offline/refusing connections, pause refreshes for 60s
+      const text = String(msg).toLowerCase();
+      if (text.includes("actively refused") || text.includes("connection refused") || text.includes("failed to connect") || text.includes("timed out")) {
+        const until = Date.now() + 60_000;
+        setRefreshHoldUntil(until);
+        pushLog("Pausing refresh for 60s after connection failure");
+      }
     }
 
     try {
@@ -200,6 +265,19 @@ export default function Dashboard() {
       setPlayers(list || []);
       // keep the Players stat in sync with the visible list
       setPlayersCount(Array.isArray(list) ? list.length : 0);
+      // client-side join/leave log with names
+      const prev = prevPlayersRef.current;
+      const nextMap = new Map<string, string>();
+      for (const p of list || []) nextMap.set(p.id, p.name || p.id);
+      // joined
+      for (const [id, name] of nextMap) {
+        if (!prev.has(id)) pushLog(`Player joined: ${name}`);
+      }
+      // left
+      for (const [id, name] of prev) {
+        if (!nextMap.has(id)) pushLog(`Player left: ${name}`);
+      }
+      prevPlayersRef.current = nextMap;
     } catch {
       /* already logged */
     }
@@ -236,7 +314,8 @@ export default function Dashboard() {
   const [shutdownSecs, setShutdownSecs] = useState<number>(60);
 
   function steamIdOf(id: string): string | null {
-    return /^\d{17}$/.test(id) ? id : null;
+    const m = (id || '').match(/\d{17}/);
+    return m ? m[0] : null;
   }
 
   async function onKick(id: string) {
@@ -299,19 +378,25 @@ export default function Dashboard() {
       {/* Actions + Players (single section) */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="section-title">Server Actions</div>
-        <div className="panel" style={{ marginBottom: 10 }}>
-          <div className="row">
-            <button className="btn btn-green" onClick={() => setBroadcastOpen(true)}>Broadcast</button>
-            <button className="btn btn-blue" onClick={onSave} disabled={saving}>
-              {saving ? "Saving..." : "Force Save"}
-            </button>
-            <button className="btn btn-gray" onClick={refreshAll}>Refresh Players</button>
-            <button className="btn btn-blue" onClick={() => setTimeModal({ kind: "restart", seconds: shutdownSecs })}>Restart</button>
-            <button className="btn btn-gray" onClick={async () => { try { await invoke('cancel_restart'); setRestartCountdown(null); pushLog('Pending restart canceled'); } catch (e:any) { pushLog(`Cancel failed: ${e?.toString?.()||e}`);} }}>Cancel Restart</button>
-            <button className="btn btn-gray" onClick={() => setUnbanOpen(true)}>Unban</button>
-            <button className="btn btn-red" onClick={() => setTimeModal({ kind: "shutdown", seconds: shutdownSecs })}>Shutdown</button>
+        {allowActions && (
+          <div className="panel" style={{ marginBottom: 10 }}>
+            <div className="row">
+              <button className="btn btn-green" onClick={() => setBroadcastOpen(true)}>Broadcast</button>
+              <button className="btn btn-blue" onClick={onSave} disabled={saving}>
+                {saving ? "Saving..." : "Force Save"}
+              </button>
+              <button className="btn btn-gray" onClick={refreshAll}>Refresh Players</button>
+              <button className="btn btn-blue" onClick={() => setTimeModal({ kind: "restart", seconds: shutdownSecs })}>Restart</button>
+              <button className="btn btn-gray" onClick={async () => { try { await invoke('cancel_restart'); setRestartCountdown(null); pushLog('Pending restart canceled'); } catch (e:any) { pushLog(`Cancel failed: ${e?.toString?.()||e}`);} }}>Cancel Restart</button>
+              <button className="btn btn-red" onClick={() => setTimeModal({ kind: "shutdown", seconds: shutdownSecs })}>Shutdown</button>
+              {restartCountdown != null && (
+                <span className="chip" title="Pending restart">
+                  <span className="dot ok" /> Restart in {restartCountdown}s
+                </span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <table>
           <thead>
@@ -320,6 +405,7 @@ export default function Dashboard() {
               <th>Steam ID</th>
               <th>Lvl</th>
               <th>Ping</th>
+              <th>Connected</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -335,6 +421,7 @@ export default function Dashboard() {
                 <td>{steamIdOf(p.id) || "—"}</td>
                 <td>{p.level ?? "?"}</td>
                 <td>{p.ping ?? "?"}</td>
+                <td>{fmtConnectedSeconds(p.connected_seconds)}</td>
                 <td>
                   <div className="row">
                     <button className="btn btn-gray" onClick={() => { const id = steamIdOf(p.id) || p.id; navigator.clipboard.writeText(id); pushLog(`Copied ID for ${p.name || id}`); }}>Copy ID</button>
@@ -402,15 +489,18 @@ export default function Dashboard() {
               />
             </div>
           </div>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <div className="fill">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="checkbox" checked={allowActions} onChange={(e)=>setAllowActions(e.target.checked)} />
+                Allow actions from this device (read-only when off)
+              </label>
+            </div>
+          </div>
           <div className="row" style={{ marginBottom: 12 }}>
             <div className="fill">
-              <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Backup directory (optional)</div>
-              <input
-                className="pill input"
-                value={backupDir}
-                onChange={(e) => setBackupDir(e.target.value)}
-                placeholder="C:\\palworldserver\\backups"
-              />
+              <div style={{ fontSize: 12, color: "#cbd5e1", marginBottom: 4 }}>Backups</div>
+              <button className="btn btn-gray" onClick={() => setBackupsOpen(true)}>Open Backups</button>
             </div>
           </div>
           <div className="row" style={{ marginBottom: 12 }}>
@@ -438,6 +528,20 @@ export default function Dashboard() {
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <button className="btn btn-gray" onClick={checkConnection}>Check Connection</button>
+              <button
+                className="btn btn-gray"
+                onClick={async () => {
+                  try {
+                    const raw = await invoke<string>('dump_players_json');
+                    pushLog('PLAYERS JSON:\n' + raw);
+                  } catch (e:any) {
+                    pushLog('Dump players failed: ' + (e?.toString?.()||e));
+                  }
+                }}
+                style={{ marginLeft: 8 }}
+              >
+                Dump Players JSON
+              </button>
               {connStatus && (
                 <span style={{ marginLeft: 10, color: connStatus.ok ? '#86efac' : '#fca5a5' }}>
                   {connStatus.ok ? 'OK' : 'Failed'}{connStatus.msg ? `: ${connStatus.msg}` : ''}
@@ -479,19 +583,23 @@ export default function Dashboard() {
             <button
               className="btn btn-blue"
               onClick={async () => {
-                if (!timeModal) return;
+                const modal = timeModal;
+                if (!modal) return;
+                setTimeModal(null); // close immediately on confirm
                 try {
-                  if (timeModal.kind === 'restart') {
-                    await invoke('restart_now', { seconds: timeModal.seconds });
-                    setRestartCountdown(timeModal.seconds);
-                    pushLog(`Restart requested (${timeModal.seconds}s lead time)`);
+                  if (modal.kind === 'restart') {
+                    await invoke('restart_now', { seconds: modal.seconds });
+                    setRestartCountdown(modal.seconds);
+                    pushLog(`Restart requested (${modal.seconds}s lead time)`);
+                    // Hold refresh starting now until some time after the scheduled restart finishes
+                    setRefreshHoldUntil(Date.now() + (modal.seconds + 60) * 1000);
                   } else {
-                    await invoke('shutdown_server', { seconds: timeModal.seconds, msg: 'Server restarting...' });
-                    pushLog(`Shutdown requested (${timeModal.seconds}s)`);
+                    await invoke('shutdown_server', { seconds: modal.seconds, msg: 'Server restarting...' });
+                    pushLog(`Shutdown requested (${modal.seconds}s)`);
+                    setRefreshHoldUntil(Date.now() + (modal.seconds + 60) * 1000);
                   }
-                  setTimeModal(null);
                 } catch (e: any) {
-                  pushLog(`${timeModal.kind} failed: ${e?.toString?.() || e}`);
+                  pushLog(`${modal.kind} failed: ${e?.toString?.() || e}`);
                 }
               }}
             >
@@ -501,32 +609,42 @@ export default function Dashboard() {
         </Modal>
       )}
 
-      {unbanOpen && (
-        <Modal title="Unban Player" onClose={() => setUnbanOpen(false)}>
-          <div className="row">
-            <input
-              className="pill input fill"
-              value={unbanId}
-              onChange={(e) => setUnbanId(e.target.value)}
-              placeholder="Enter Steam ID to unban"
-            />
-            <button
-              className="btn btn-blue"
-              onClick={async () => {
-                const id = unbanId.trim();
-                if (!id) return;
-                try {
-                  await invoke('unban_player', { playerId: id });
-                  pushLog(`Unban requested for ${id}`);
-                  setUnbanOpen(false);
-                  setUnbanId("");
-                } catch (e:any) {
-                  pushLog(`Unban failed: ${e?.toString?.()||e}`);
-                }
-              }}
-            >
-              Confirm
-            </button>
+      {backupsOpen && (
+        <Modal title="Backups" onClose={() => setBackupsOpen(false)}>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <div className="fill">
+              <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 4 }}>Backup source folder</div>
+              <div className="row">
+                <input className="pill input fill" value={backupDir} onChange={(e)=>setBackupDir(e.target.value)} placeholder="C:\\path\\to\\source" />
+                <button className="btn btn-gray" onClick={async ()=>{
+                  const sel = await openDialog({ directory: true, multiple: false });
+                  if (typeof sel === 'string') setBackupDir(sel);
+                }}>Pick</button>
+              </div>
+            </div>
+          </div>
+          <div className="row" style={{ marginBottom: 8 }}>
+            <div className="fill">
+              <div style={{ fontSize: 12, color: '#cbd5e1', marginBottom: 4 }}>Backup destination folder</div>
+              <div className="row">
+                <input className="pill input fill" value={backupDestDir} onChange={(e)=>setBackupDestDir(e.target.value)} placeholder="C:\\path\\to\\destination" />
+                <button className="btn btn-gray" onClick={async ()=>{
+                  const sel = await openDialog({ directory: true, multiple: false });
+                  if (typeof sel === 'string') setBackupDestDir(sel);
+                }}>Pick</button>
+              </div>
+            </div>
+          </div>
+          <div className="row" style={{ justifyContent:'space-between', alignItems:'center' }}>
+            <button className="btn btn-blue" onClick={async ()=>{
+              try {
+                const path = await invoke<string>('backup_now', { srcOverride: backupDir || null, destOverride: backupDestDir || null });
+                pushLog(`Backup created: ${path}`);
+              } catch(e:any) {
+                pushLog(`Backup failed: ${e?.toString?.()||e}`);
+              }
+            }}>Backup Now</button>
+            <button className="btn btn-gray" onClick={()=> setBackupsOpen(false)}>Done</button>
           </div>
         </Modal>
       )}

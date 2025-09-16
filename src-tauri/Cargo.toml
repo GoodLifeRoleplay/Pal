@@ -1,6 +1,6 @@
 [package]
 name = "palworld-rest-api-client"
-version = "1.1.0"
+version = "1.1.1"
 description = "client for palworld rest api"
 authors = ["you"]
 edition = "2021"
@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "1", features = [] }
 
 [dependencies]
-tauri = { version = "1", features = [ "api-all"] }
+tauri = { version = "1", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
@@ -34,3 +34,11 @@ base64 = "0.21"
 urlencoding = "2"
 dirs-next = "2"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
+regex = "1"
+
+[features]
+# enable this by default so `tauri build` works without extra flags
+default = ["custom-protocol"]
+
+# forward the feature to the tauri crate
+custom-protocol = ["tauri/custom-protocol"]
